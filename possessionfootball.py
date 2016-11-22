@@ -20,8 +20,27 @@ plt.ion()
 # if they get within a certain distance of the ball, they are assumed to have
 # won the ball.
 
+RENDER_EVERY = 20
+RENDER = True
+VERBOSE = False
+PROB_PASS = 0.9
+NUM_PLAYERS = 5
+TIME_STEP = 0.05
+PLAYER_RADIUS = 0.1
+POSSESSION_DISTANCE = 2*PLAYER_RADIUS
+BALL_SPEED = 0.1
+DEFENDER_SPEED = 0.05
+
+# Arrange the players on the unit circle
+def init_player_positions(num_players):
+    p_positions = np.zeros((num_players, 2))
+    for player in range(num_players):
+        theta = (float(player) / float(num_players)) * (2*np.pi)
+        p_positions[player, :] = np.array([np.cos(theta), np.sin(theta)])
+    return p_positions
+
 ball_position = np.array([0,0])
-player_positions = np.array([[1,0], [-1, 0], [0, 1.71]])
+player_positions = init_player_positions(NUM_PLAYERS)
 defender_position = np.mean(player_positions)
 
 ball_position = player_positions[0]
@@ -30,16 +49,6 @@ ball_velocity = np.array([0,0])
 possession = True
 player_in_possession = None
 last_pass = None
-
-RENDER_EVERY = 20
-RENDER = True
-VERBOSE = False
-PROB_PASS = 0.9
-NUM_PLAYERS = 3
-TIME_STEP = 0.05
-POSSESSION_DISTANCE = 0.2
-BALL_SPEED = 0.1
-DEFENDER_SPEED = 0.05
 
 FIG = plt.figure()
 AXES = plt.axes(xlim = (-3,3), ylim = (-3, 3))
@@ -131,3 +140,4 @@ while possession:
 
         
 print "Defender gained possession!"
+
