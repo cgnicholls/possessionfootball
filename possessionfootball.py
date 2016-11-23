@@ -25,22 +25,24 @@ RENDER = True
 VERBOSE = False
 PROB_PASS = 0.9
 NUM_PLAYERS = 5
-TIME_STEP = 0.05
+TIME_STEP = 0.1
 PLAYER_RADIUS = 0.1
+CIRCLE_RADIUS = 2.0
 POSSESSION_DISTANCE = 2*PLAYER_RADIUS
 BALL_SPEED = 0.1
 DEFENDER_SPEED = 0.05
 
 # Arrange the players on the unit circle
-def init_player_positions(num_players):
+def init_player_positions(num_players, circle_radius):
     p_positions = np.zeros((num_players, 2))
     for player in range(num_players):
         theta = (float(player) / float(num_players)) * (2*np.pi)
-        p_positions[player, :] = np.array([np.cos(theta), np.sin(theta)])
+        p_positions[player, :] = circle_radius * np.array([np.cos(theta),
+            np.sin(theta)])
     return p_positions
 
 ball_position = np.array([0,0])
-player_positions = init_player_positions(NUM_PLAYERS)
+player_positions = init_player_positions(NUM_PLAYERS, CIRCLE_RADIUS)
 defender_position = np.mean(player_positions)
 
 ball_position = player_positions[0]
