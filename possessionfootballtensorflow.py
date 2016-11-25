@@ -35,10 +35,14 @@ BALL_SPEED = 0.1
 DEFENDER_SPEED = 0.05
 
 # Q-learning parameters
-INITIAL_LEARNING_RATE = 1e-6
+INITIAL_LEARNING_RATE = 1e-5
 INITIAL_EPSILON_GREEDY = 1.0
+FINAL_EPSILON_GREEDY = 0.01
+EPSILON_STEPS = 1000
 NUM_ACTIONS = NUM_PLAYERS
 ACTIONS = range(NUM_PLAYERS)
+DISCOUNT_FACTOR = 0.99
+MINI_BATCH_SIZE = 32
 
 # Arrange the players on the unit circle
 def init_player_positions(num_players, circle_radius):
@@ -49,8 +53,9 @@ def init_player_positions(num_players, circle_radius):
             np.sin(theta)])
     return p_positions
 
-FIG = plt.figure()
-AXES = plt.axes(xlim = (-3,3), ylim = (-3, 3))
+if RENDER:
+    FIG = plt.figure()
+    AXES = plt.axes(xlim = (-3,3), ylim = (-3, 3))
 
 def render_environment(p_positions, d_position, b_position):
     plt.cla()
@@ -80,6 +85,7 @@ def step_environment(timestep, d_position, b_position, b_velocity):
 
 # Returns the ball velocity resulting from p1 passing to p2
 def pass_ball(p_positions, p1, p2):
+    assert p1 != p2
     direction = p_positions[p2] - p_positions[p1]
     length_2 = squared_length(direction)
     assert squared_distance > 0
@@ -92,8 +98,8 @@ def get_state(p_positions, d_position, p_possession):
     num_players = len(p_positions)
     theta = -(float(p_possession) / float(num_players)) * (2*np.pi)
     # Rotate d_position by theta about the origin
-    return d_position * np.array([[np.cos(theta), np.sin(theta)],
-        [-np.sin(theta), np.cos(theta)]])
+    return np.dot(d_position, np.array([[np.cos(theta), np.sin(theta)],
+        [-np.sin(theta), np.cos(theta)]]))
 
 # Compute the action predicted by the current parameters of the q network for
 # the current state.
@@ -117,16 +123,14 @@ def compute_action(tf_sess, input_layer, output_layer, current_state,
 # that we pass to, and the reward is +1 if we complete the pass, and -1 if it is
 # intercepted. To give each player the same network, we transform the
 # coordinates so that the player is at a fixed position.
-def play_game(tf_sess, tf_input_layer, tf_output_layer, epsilon_greedy):
+def play_game(tf_sess, tf_input_layer, tf_output_layer, epsilon_greedy, render=RENDER):
     t = 0
     ball_position = np.array([0,0])
     player_positions = init_player_positions(NUM_PLAYERS, CIRCLE_RADIUS)
-    defender_position = np.mean(player_positions)
+    defender_position = np.mean(player_positions, 0)
 
     ball_position = player_positions[0]
     ball_velocity = np.array([0,0])
-
-    possession = True
     player_in_possession = None
     last_pass = None
 
@@ -137,11 +141,12 @@ def play_game(tf_sess, tf_input_layer, tf_output_layer, epsilon_greedy):
         # The ball is in some position. If it is within defender_distance of the
         # defender, then the defender wins and we return the number of passes
         if squared_distance(ball_position, defender_position) < POSSESSION_DISTANCE**2:
-            next_state = get_state(player_positions, defender_position, player_in_possession)
+            next_state = get_state(player_positions, defender_position,
+                    last_pass)
             transitions.append({'state': current_state, 'action': action,
                 'reward': -1, 'next_state': next_state, 'terminal': True})
             return transitions
-        
+
         # Otherwise, check if one of the players is in possesion
         for player in range(NUM_PLAYERS):
             if (squared_distance(player_positions[player], ball_position) <
@@ -159,11 +164,13 @@ def play_game(tf_sess, tf_input_layer, tf_output_layer, epsilon_greedy):
                 # ball, and we still need the defender's position with respect
                 # to him.
                 else:
-                    print player_in_possession
                     next_state = get_state(player_positions, defender_position,
-                            player_in_possession)
+                            player)
                     transitions.append({'state': current_state, 'action':
-                        action, 'reward': 1, 'terminal': False})
+                        action, 'reward': 1, 'next_state': next_state,
+                        'terminal': False})
+                    if VERBOSE:
+                        print "Received pass:", player
                 player_in_possession = player
                 break
         
@@ -178,25 +185,28 @@ def play_game(tf_sess, tf_input_layer, tf_output_layer, epsilon_greedy):
 
             action = compute_action(tf_sess, tf_input_layer, tf_output_layer,
                     current_state, epsilon_greedy)
-            player_to_receive = (action - player_in_possession) % NUM_PLAYERS
-            
+            player_to_receive = (player_in_possession + action) % NUM_PLAYERS
+            if VERBOSE:
+                print "Player to receive:", player_to_receive
+                print "Action:", action
 #            # If we pass the ball, then update the ball's velocity
 #            if random.random() < PROB_PASS:
 #                players_to_receive = [(player_in_possession + i) % NUM_PLAYERS for i
 #                        in range(1, NUM_PLAYERS)]
 #                player_to_receive = random.choice(players_to_receive)
 
-            ball_velocity = pass_ball(player_positions, player_in_possession,
-                    player_to_receive)
-            last_pass = player_in_possession
-            player_in_possession = None
+            if player_to_receive != player_in_possession:
+                ball_velocity = pass_ball(player_positions, player_in_possession,
+                        player_to_receive)
+                last_pass = player_in_possession
+                player_in_possession = None
 
         # Now update the environment
         defender_position, ball_position = step_environment(TIME_STEP,
                 defender_position, ball_position, ball_velocity)
 
         if t % RENDER_EVERY == 0:
-            if RENDER:
+            if render:
                 render_environment(player_positions, defender_position, ball_position)
         if VERBOSE:
             print "Positions"
@@ -222,6 +232,49 @@ def create_network(num_hidden, num_players):
     output_layer = tf.nn.softmax(tf.matmul(hidden1, W2) + b2)
     return input_layer, output_layer
 
+# Return a one hot vector with a 1 at the index for the action.
+def compute_one_hot_actions(actions):
+    one_hot_actions = []
+    for i in xrange(len(actions)):
+        one_hot = np.zeros([NUM_ACTIONS])
+        one_hot[ACTIONS.index(actions[i])] = 1
+        one_hot_actions.append(one_hot)
+    return one_hot_actions
+
+def train(tf_sess, observations, tf_input_layer, tf_output_layer,
+        tf_train_operation, tf_action, tf_target, tf_cost):
+    # Sample a minibatch to train with
+    mini_batch = random.sample(observations, MINI_BATCH_SIZE)
+    
+    states = [d['state'] for d in mini_batch]
+    actions = [d['action'] for d in mini_batch]
+    rewards = [d['reward'] for d in mini_batch]
+    next_states = [d['next_state'] for d in mini_batch]
+    expected_q = []
+
+    # Compute Q(s', a'; theta_{i-1}). This is an unbiased estimator for y_i as
+    # in DQN paper.
+    next_q = tf_sess.run(tf_output_layer, feed_dict={tf_input_layer :
+        next_states})
+
+    for i in range(len(mini_batch)):
+        if mini_batch[i]['terminal']:
+            # This was a terminal frame, so the Q-value is just the reward
+            expected_q.append(rewards[i])
+        else:
+            expected_q.append(rewards[i] + DISCOUNT_FACTOR * \
+                    np.max(next_q[i]))
+
+    one_hot_actions = compute_one_hot_actions(actions)
+    
+    # Run the train operation to update the q-values towards these q-values
+    _, loss = tf_sess.run([tf_train_operation, tf_cost], feed_dict={
+        tf_input_layer : states,
+        tf_action : one_hot_actions,
+        tf_target : expected_q})
+
+    return loss
+
 def qlearning():
     tf_sess = tf.Session()
     
@@ -246,12 +299,38 @@ def qlearning():
     observations = deque()
     actions = []
 
+    episode_lengths = []
+    
+    ep_index = 0
+    loss = None
+    
     # Record transitions
     while True:
         # Run an episode
         episode_data = play_game(tf_sess, tf_input_layer, tf_output_layer,
                 epsilon_greedy)
-        print episode_data
-        observations.append(episode_data)
+        #print "Length of episode", len(episode_data)
+        for ep in episode_data:
+            observations.append(ep)
+        episode_lengths.append(len(episode_data))
+        if len(observations) > 128:
+            loss = train(tf_sess, observations, tf_input_layer, tf_output_layer,
+                    tf_train_operation, tf_action, tf_target, tf_cost)
+        epsilon_greedy = epsilon_greedy - \
+        (INITIAL_EPSILON_GREEDY-FINAL_EPSILON_GREEDY) / float(EPSILON_STEPS)
+        #print epsilon_greedy
 
-qlearning()
+        if (ep_index % 100) == 0:
+            print np.mean(episode_lengths[-10:])
+            print loss
+        ep_index = ep_index + 1
+        
+        if np.mean(episode_lengths[-10:]) > 300:
+            return tf_sess, tf_input_layer, tf_output_layer
+
+tf_sess, tf_input_layer, tf_output_layer = qlearning()
+
+# Now observe the game with the learned parameters
+FIG = plt.figure()
+AXES = plt.axes(xlim = (-3,3), ylim = (-3, 3))
+play_game(tf_sess, tf_input_layer, tf_output_layer, 0.0, render=True)
