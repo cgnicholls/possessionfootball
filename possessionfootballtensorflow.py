@@ -35,7 +35,7 @@ BALL_SPEED = 0.1
 DEFENDER_SPEED = 0.1
 
 # Q-learning parameters
-INITIAL_LEARNING_RATE = 1e-5
+INITIAL_LEARNING_RATE = 1e-4
 INITIAL_EPSILON_GREEDY = 1.0
 FINAL_EPSILON_GREEDY = 0.01
 EPSILON_STEPS = 1000
@@ -44,7 +44,7 @@ ACTIONS = range(1,NUM_PLAYERS)
 DISCOUNT_FACTOR = 0.7
 MINI_BATCH_SIZE = 512
 L2_REG = 1e-3
-KEEP_PROB = 0.3
+KEEP_PROB = 0.5
 
 # Arrange the players on the unit circle
 def init_player_positions(num_players, circle_radius):
