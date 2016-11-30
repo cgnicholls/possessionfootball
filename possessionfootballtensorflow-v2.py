@@ -38,22 +38,26 @@ PROB_PASS = 0.9
 NUM_PLAYERS = 5
 TIME_STEP = 1.0
 PLAYER_RADIUS = 0.1
-CIRCLE_RADIUS = 5
+CIRCLE_RADIUS = 3
 POSSESSION_DISTANCE = 2*PLAYER_RADIUS
 BALL_SPEED = 0.11
 DEFENDER_SPEED = 0.1
 
 # Q-learning parameters
-INITIAL_LEARNING_RATE = 1e-4
+INITIAL_LEARNING_RATE = 1e-3
 INITIAL_EPSILON_GREEDY = 1.0
 FINAL_EPSILON_GREEDY = 0.0
-EPSILON_STEPS = 5000
+EPSILON_STEPS = 1000
 NUM_ACTIONS = NUM_PLAYERS-1
 ACTIONS = range(0,NUM_PLAYERS-1)
 DISCOUNT_FACTOR = 0.7
 MINI_BATCH_SIZE = 128
 L2_REG = 1e-3
 KEEP_PROB = 0.5
+
+np.random.seed(1)
+# Arrange the players randomly
+INITIAL_PLAYER_POSITIONS = np.random.rand(NUM_PLAYERS, 2) * CIRCLE_RADIUS - CIRCLE_RADIUS / 2
 
 class Game():
     def __init__(self):
@@ -81,9 +85,9 @@ class Game():
         return state, reward, terminal
         
     def init_game(self):
-        self.player_positions = init_player_positions(NUM_PLAYERS, CIRCLE_RADIUS)
+        self.player_positions = init_players_on_circle(NUM_PLAYERS, CIRCLE_RADIUS)
         self.defender_position = np.mean(self.player_positions, 0) + \
-        CIRCLE_RADIUS / 3.0 * np.random.randn(2)
+        CIRCLE_RADIUS / 5.0 * np.random.randn(2)
         starting_player = np.random.randint(NUM_PLAYERS)
         self.ball_position = self.player_positions[starting_player]
         self.ball_velocity = np.array([0,0])
@@ -100,7 +104,7 @@ class Game():
         self.render_or_not = render_or_not
         if self.fig == None and self.render_or_not == True:
             self.fig = plt.figure()
-            self.axes = plt.axes(xlim = (-3,3), ylim = (-3, 3))
+            self.axes = plt.axes(xlim = (-CIRCLE_RADIUS-1,CIRCLE_RADIUS+1), ylim = (-CIRCLE_RADIUS-1, CIRCLE_RADIUS+1))
         
     def render(self):
         plt.cla()
@@ -181,16 +185,25 @@ class Game():
             self.ball_velocity = direction / length
         else:
             self.ball_velocity = np.zeros(2)
-        
-# Arrange the players on the unit circle
-def init_player_positions(num_players, circle_radius):
+            
+def init_players_on_circle(num_players, circle_radius):
     p_positions = np.zeros((num_players, 2))
     for player in range(num_players):
         theta = (float(player) / float(num_players)) * (2*np.pi)
         p_positions[player, :] = circle_radius * np.array([np.cos(theta),
-            np.sin(theta)])
-        #p_positions[player, :] = np.random.rand(2) * circle_radius - circle_radius/2 * np.array([1,1])
-    return p_positions
+        np.sin(theta)])
+    return p_positions 
+
+# Arrange the players randomly on the unit circle
+def init_player_positions(num_players, circle_radius):
+#    p_positions = np.zeros((num_players, 2))
+#    for player in range(num_players):
+#        #theta = (float(player) / float(num_players)) * (2*np.pi)
+#        #p_positions[player, :] = circle_radius * np.array([np.cos(theta),
+#        #    np.sin(theta)])
+#        p_positions[player, :] = np.random.rand(2) * circle_radius - circle_radius/2 * np.array([1,1])
+#    return p_positions
+    return INITIAL_PLAYER_POSITIONS
 
 def squared_distance(v1, v2):
     return np.sum((v1-v2)**2)
@@ -217,11 +230,11 @@ def compute_action(tf_sess, tf_output_layer,
     
 def weight_variable(shape):
     initial = tf.truncated_normal(shape, stddev=0.1, name='weights')
-    return tf.Variable(initial)
+    weight = tf.Variable(initial)
+    return weight, tf.nn.l2_loss(weight)
 
 def bias_variable(shape):
-    initial = tf.constant(0.1, shape=shape)
-    return tf.Variable(initial)
+    return tf.Variable(tf.constant(0.1, shape=shape))
     
 def variable_summaries(var, name):
     with tf.name_scope('summaries'):
@@ -235,17 +248,17 @@ def variable_summaries(var, name):
 def nn_layer(input_tensor, input_dim, output_dim, layer_name, act=tf.nn.relu):
     with tf.name_scope(layer_name):
         with tf.name_scope('weights'):
-            weights = weight_variable([input_dim, output_dim])
-            variable_summaries(weights, layer_name + '/weights')
+            weights, l2_weights = weight_variable([input_dim, output_dim])
+            #variable_summaries(weights, layer_name + '/weights')
         with tf.name_scope('biases'):
             biases = bias_variable([output_dim])
-            variable_summaries(biases, layer_name + '/biases')
+            #variable_summaries(biases, layer_name + '/biases')
         with tf.name_scope('Wx_plus_b'):
             preactivate = tf.matmul(input_tensor, weights) + biases
-            tf.histogram_summary(layer_name + '/pre_activations', preactivate)
+            #tf.histogram_summary(layer_name + '/pre_activations', preactivate)
         activations = act(preactivate)
-        tf.histogram_summary(layer_name + '/activations', activations)
-        return activations
+        #tf.histogram_summary(layer_name + '/activations', activations)
+        return activations, l2_weights
 
 # We want a network that can well approximate Q-values. In particular, since
 # our reward is -1 if we lose possession and otherwise 0, our Q-value will
@@ -255,17 +268,17 @@ def create_network(input_dim, num_hidden, num_players):
         input_layer = tf.placeholder(tf.float32, shape=[None, input_dim], name='input_layer')
     keep_prob = tf.placeholder(tf.float32, name='keep_prob')
     with tf.name_scope('layer1'):
-        hidden1 = nn_layer(input_layer, input_dim, num_hidden, 'layer1')
+        hidden1, l2_hidden1 = nn_layer(input_layer, input_dim, num_hidden, 'layer1')
         dropped1 = tf.nn.dropout(hidden1, keep_prob)
     with tf.name_scope('layer2'):
-        hidden2 = nn_layer(dropped1, num_hidden, num_hidden, 'layer2')
+        hidden2, l2_hidden2 = nn_layer(dropped1, num_hidden, num_hidden, 'layer2')
         dropped2 = tf.nn.dropout(hidden2, keep_prob)
     with tf.name_scope('layer3'):
-        hidden3 = nn_layer(dropped2, num_hidden, num_players, 'layer3', act=tf.identity)
+        hidden3, l2_hidden3 = nn_layer(dropped2, num_hidden, num_players, 'layer3', act=tf.identity)
     with tf.name_scope('output'):
         output_layer = hidden3
-    
-    return output_layer
+    l2_reg = l2_hidden1 + l2_hidden2 + l2_hidden3
+    return output_layer, l2_reg
 
 # Return a one hot vector with a 1 at the index for the action.
 def compute_one_hot_actions(actions):
@@ -276,7 +289,8 @@ def compute_one_hot_actions(actions):
         one_hot_actions.append(one_hot)
     return one_hot_actions
 
-def train(tf_sess, tf_train_operation, tf_output_layer, merged, observations, keep_prob):
+def train(tf_sess, tf_train_operation, tf_output_layer, merged, observations,
+          reward_history, keep_prob):
     # Sample a minibatch to train with
     mini_batch = random.sample(observations, MINI_BATCH_SIZE)
     
@@ -309,7 +323,8 @@ def train(tf_sess, tf_train_operation, tf_output_layer, merged, observations, ke
         default_graph.get_tensor_by_name('input/input_layer:0') : states,
         default_graph.get_tensor_by_name('action:0') : one_hot_actions,
         default_graph.get_tensor_by_name('target:0') : expected_q,
-        default_graph.get_tensor_by_name('keep_prob:0') : keep_prob})
+        default_graph.get_tensor_by_name('keep_prob:0') : keep_prob,
+        default_graph.get_tensor_by_name('avg_reward/rewards:0'): reward_history})
 
     return summary
 
@@ -317,7 +332,7 @@ def qlearning():
     tf.reset_default_graph()
     tf_sess = tf.Session()
     
-    tf_output_layer = create_network((1+NUM_PLAYERS)*2, 20, NUM_ACTIONS)
+    tf_output_layer, l2_reg = create_network((1+NUM_PLAYERS)*2, 20, NUM_ACTIONS)
 
     tf_action = tf.placeholder("float", [None, NUM_ACTIONS], name='action')
 
@@ -328,10 +343,17 @@ def qlearning():
 
     with tf.name_scope('cost'):
         #reg_losses = [tf.nn.l2_loss(tf.get_variable('layer1/weights'))]
-        tf_cost = tf.reduce_mean(tf.square(tf_target - tf_q_for_action))
+        tf_cost = tf.reduce_mean(tf.square(tf_target - tf_q_for_action)) + \
+        l2_reg * L2_REG
         #+ L2_REG * sum(reg_losses)
         tf.scalar_summary('cost', tf_cost)
+        tf.scalar_summary('l2_reg', l2_reg)
         #tf.scalar_summary('reg_loss', sum(reg_losses))
+        
+    with tf.name_scope('avg_reward'):
+        tf_rewards = tf.placeholder("float", [None], name='rewards')
+        tf_avg_reward = tf.reduce_mean(tf_rewards)
+        tf.scalar_summary('avg_reward', tf_avg_reward)
 
     with tf.name_scope('train_op'):
         tf_train_operation = \
@@ -387,8 +409,10 @@ def qlearning():
         
         if len(transitions) > MINI_BATCH_SIZE:
             summary = train(tf_sess, tf_train_operation, 
-                         tf_output_layer, merged, transitions, KEEP_PROB)
-            train_writer.add_summary(summary, t_step)
+                         tf_output_layer, merged, transitions, 
+                         last_nonzero_rewards[-500:], KEEP_PROB)
+            if t_step % 100 == 0:
+                train_writer.add_summary(summary, t_step)
             t_step = t_step + 1
         epsilon_greedy = epsilon_greedy - \
         (INITIAL_EPSILON_GREEDY-FINAL_EPSILON_GREEDY) / float(EPSILON_STEPS)
@@ -397,12 +421,11 @@ def qlearning():
         avg_nonzero_reward = np.mean(last_nonzero_rewards)
         if (ep_index % 100) == 0:
             print "Average nonzero reward", avg_nonzero_reward
-            print "Playing randomly with prob", epsilon_greedy        
-            print last_nonzero_rewards[-100:]
+            print "Playing randomly with prob", epsilon_greedy
         ep_index = ep_index + 1
         
         if ep_index > 1000:
-            if avg_nonzero_reward > -0.25:
+            if avg_nonzero_reward > -0.1:
                 print "Min reward over last 500 is", avg_nonzero_reward, "> -0.1, so finished training"
                 return tf_sess, tf_output_layer
 
