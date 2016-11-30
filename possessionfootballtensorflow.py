@@ -361,7 +361,7 @@ def qlearning():
         ep_index = ep_index + 1
         
         if ep_index > 0:
-            if avg_ep_length > 9:
+            if avg_ep_length > 8:
                 print "Min reward over last 50 is", avg_ep_length, "> 9, so finished training"
                 return tf_sess, tf_input_layer, tf_output_layer, tf_keep_prob
 
