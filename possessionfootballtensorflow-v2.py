@@ -14,6 +14,7 @@ import random
 import tensorflow as tf
 from collections import deque
 import time
+import game
 
 plt.ion()
 
