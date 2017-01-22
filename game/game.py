@@ -1,19 +1,14 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
-RENDER_EVERY = 50
-RENDER = False
-VERBOSE = False
-PROB_PASS = 0.9
+RENDER_EVERY = 100
 NUM_PLAYERS = 5
-TIME_STEP = 1.0
+TIME_STEP = 0.1
 PLAYER_RADIUS = 0.1
 CIRCLE_RADIUS = 3
-POSSESSION_DISTANCE = 2*PLAYER_RADIUS
-BALL_SPEED = 0.11
-DEFENDER_SPEED = 0.1
-
-# Arrange the players randomly
-INITIAL_PLAYER_POSITIONS = np.random.rand(NUM_PLAYERS, 2) * CIRCLE_RADIUS - CIRCLE_RADIUS / 2
+POSSESSION_DISTANCE = 1.5*PLAYER_RADIUS
+BALL_SPEED = 1.0
+DEFENDER_SPEED = 0.5
 
 class Game():
     def __init__(self):
@@ -23,6 +18,7 @@ class Game():
         self.state = None
         self.ball_velocity = None
         self.last_player = None
+        self.player_receiving = None
         self.playing_game = False
         self.t = None
         self.fig = None
@@ -43,7 +39,8 @@ class Game():
         return state, reward, terminal
         
     def init_game(self):
-        self.player_positions = init_player_positions(NUM_PLAYERS, CIRCLE_RADIUS)
+        self.player_positions = init_player_positions(NUM_PLAYERS,
+                CIRCLE_RADIUS, False)
         self.defender_position = np.mean(self.player_positions, 0) + \
         CIRCLE_RADIUS / 5.0 * np.random.randn(2)
         starting_player = np.random.randint(NUM_PLAYERS)
@@ -51,6 +48,7 @@ class Game():
         self.ball_velocity = np.array([0,0])
         self.playing_game = True
         self.last_player = None
+        self.player_receiving = None
         self.action_just_taken = False
         self.t = 0
         return self.rl_state(starting_player,0)[0]
@@ -80,11 +78,14 @@ class Game():
     def stop_game(self):
         self.playing_game = False
         
+    # The agent takes action 'action', and we update the game until the next
+    # chance to take action.
     def step_environment(self, action):
         # If the game state is not started, then start the game
         if self.playing_game == False:
             print "Game not playing. Reset environment"
             return
+
         # Enter game loop
         action_used = False
         while True:
@@ -143,6 +144,7 @@ class Game():
             self.ball_velocity = direction / length
         else:
             self.ball_velocity = np.zeros(2)
+        self.player_receiving = player_receiving
             
 def init_players_on_circle(num_players, circle_radius):
     p_positions = np.zeros((num_players, 2))
@@ -152,16 +154,12 @@ def init_players_on_circle(num_players, circle_radius):
         np.sin(theta)])
     return p_positions 
 
-# Arrange the players randomly on the unit circle
-def init_player_positions(num_players, circle_radius):
-#    p_positions = np.zeros((num_players, 2))
-#    for player in range(num_players):
-#        #theta = (float(player) / float(num_players)) * (2*np.pi)
-#        #p_positions[player, :] = circle_radius * np.array([np.cos(theta),
-#        #    np.sin(theta)])
-#        p_positions[player, :] = np.random.rand(2) * circle_radius - circle_radius/2 * np.array([1,1])
-#    return p_positions
-    return INITIAL_PLAYER_POSITIONS
+# Arrange the players randomly
+def init_player_positions(num_players, circle_radius, use_default=False):
+    if use_default:
+        return init_players_on_circle(num_players, circle_radius)
+    else:
+        return np.random.rand(num_players, 2) * circle_radius - circle_radius / 2
 
 def squared_distance(v1, v2):
     return np.sum((v1-v2)**2)
